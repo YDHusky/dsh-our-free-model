@@ -110,7 +110,7 @@ async function acquireServiceLock(dataDir) {
 /** 直接创建核心和 HTTP 服务，不加载插件入口、Cordis 或 DSH 凭据。 */
 export async function startStandalone({
   dataDir = resolveStandaloneDataDir(), host = '127.0.0.1', port,
-  logger = console, refresh = true, probe, lanEnabled, lanPort,
+  logger = console, refresh = true, probe, lanEnabled, lanPort, lanKey,
   startRelay = startLanRelay,
   workbenchOptions, subscriptionOptions,
   // The desktop updater judges the host it runs on (`win32` + `x64` only). It
@@ -127,6 +127,9 @@ export async function startStandalone({
   if (lanEnabled !== undefined && typeof lanEnabled !== 'boolean') throw new TypeError('lanEnabled must be a boolean')
   if (lanPort !== undefined && (!Number.isInteger(lanPort) || lanPort < 0 || lanPort > 65535)) {
     throw new TypeError('lanPort must be an integer between 0 and 65535')
+  }
+  if (lanKey !== undefined && (typeof lanKey !== 'string' || lanKey.trim() === '')) {
+    throw new TypeError('lanKey must be a non-empty string')
   }
   if (typeof desktopPlatform !== 'string' || desktopPlatform === '') throw new TypeError('desktopPlatform must be a non-empty string')
   if (typeof desktopArch !== 'string' || desktopArch === '') throw new TypeError('desktopArch must be a non-empty string')
@@ -236,7 +239,13 @@ export async function startStandalone({
     const savedPort = settings.get().standalonePort
     const requestedPort = port ?? (Number.isInteger(savedPort) && savedPort >= 0 && savedPort <= 65535 ? savedPort : 18900)
     const existingKey = settings.get().forwardKey
-    const key = typeof existingKey === 'string' && existingKey !== '' ? existingKey : generateKey()
+    let key = typeof existingKey === 'string' && existingKey !== '' ? existingKey : generateKey()
+    // A container supplies its public credential at every start. Keep that
+    // credential on the inference-only relay and rotate the loopback key if an
+    // old settings file ever made the two equal.
+    if (lanKey !== undefined) {
+      while (key === lanKey) key = generateKey()
+    }
     const savedLanPort = settings.get().standaloneLanPort
     settings.update({
       forwardKey: key,
@@ -244,6 +253,7 @@ export async function startStandalone({
         && settings.get().managementKey !== key ? settings.get().managementKey : generateKey(),
       standaloneLanEnabled: lanEnabled ?? settings.get().standaloneLanEnabled === true,
       standaloneLanPort: lanPort ?? (Number.isInteger(savedLanPort) && savedLanPort >= 0 && savedLanPort <= 65535 ? savedLanPort : 0),
+      ...lanKey === undefined ? {} : { standaloneLanKey: lanKey },
       ...probe === undefined ? {} : { standaloneProbe: probe === true },
     })
     settings.flush()

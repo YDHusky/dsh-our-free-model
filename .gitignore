@@ -4,6 +4,9 @@ dist/
 *.tgz
 .DS_Store
 Thumbs.db
+.env
+.env.*
+!.env.example
 
 # Local verification scratch: isolated DSH_HOME, app output, profile backups.
 .verify/

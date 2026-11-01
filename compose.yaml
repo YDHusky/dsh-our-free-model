@@ -1,0 +1,25 @@
+services:
+  ofm-proxy:
+    build:
+      context: .
+    restart: unless-stopped
+    init: true
+    environment:
+      OFM_API_KEY: ${OFM_API_KEY:?Set OFM_API_KEY in .env}
+      OFM_PORT: 8080
+      OFM_DATA_DIR: /data
+      OFM_NO_REFRESH: ${OFM_NO_REFRESH:-false}
+    ports:
+      - "${OFM_PUBLIC_PORT:-8080}:8080"
+    volumes:
+      - ofm-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  ofm-data:

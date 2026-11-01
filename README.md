@@ -36,6 +36,24 @@
 
 ---
 
+## Docker 部署 OpenAI 反代
+
+本仓库现可直接作为 OpenAI 兼容反代运行，复用原项目的独立运行时、免费车道、
+账号渠道、流式输出和工具调用。容器只发布推理中继，管理服务仍监听容器回环地址。
+
+```bash
+cp .env.example .env
+openssl rand -hex 32   # 将结果填入 .env 的 OFM_API_KEY
+docker compose up -d --build
+```
+
+默认 Base URL 为 `http://127.0.0.1:8080/v1`，API Key 为 `.env` 中的
+`OFM_API_KEY`。详细配置、SDK 示例和安全边界见
+[Docker OpenAI 反代说明](packages/proxy/README.md)。推理请求仍会发送到所选渠道的上游，
+容器本身不在本地运行模型。
+
+---
+
 ## 交流群
 
 <div align="center">
