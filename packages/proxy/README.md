@@ -8,7 +8,7 @@ the container's loopback interface and is not published.
 
 ## Start with the published image
 
-The CI workflow publishes multi-architecture images to:
+The CI workflow publishes a `linux/amd64` image to:
 
 ```text
 registry.yudream.online/library/dsh-our-free-model-proxy:latest

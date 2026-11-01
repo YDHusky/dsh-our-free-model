@@ -52,7 +52,7 @@ docker compose up -d --build
 [Docker OpenAI 反代说明](packages/proxy/README.md)。推理请求仍会发送到所选渠道的上游，
 容器本身不在本地运行模型。
 
-CI 构建的 `linux/amd64` 与 `linux/arm64` 镜像发布到
+CI 构建的 `linux/amd64` 镜像发布到
 `registry.yudream.online/library/dsh-our-free-model-proxy:latest`。
 
 ---
