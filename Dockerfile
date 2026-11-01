@@ -13,9 +13,7 @@ COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --chown=node:node . .
 
 RUN mkdir -p /data \
-    && chown node:node /data \
-    && node --version \
-    && bun --version
+    && chown node:node /data
 
 USER node
 
