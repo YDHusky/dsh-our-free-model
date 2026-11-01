@@ -190,6 +190,13 @@ def verify_descriptor(root: Path, descriptor: dict) -> Path:
     return file
 
 
+def one_unique_descriptor(candidates: list[dict], label: str) -> dict:
+    unique = {item['digest']: item for item in candidates}
+    if len(unique) != 1:
+        raise RuntimeError(f'OCI archive must contain one {label}; found {len(unique)}')
+    return next(iter(unique.values()))
+
+
 def select_image_manifest(root: Path, descriptor: dict) -> tuple[dict, Path, dict]:
     while descriptor['mediaType'] in (
         'application/vnd.oci.image.index.v1+json',
@@ -200,9 +207,7 @@ def select_image_manifest(root: Path, descriptor: dict) -> tuple[dict, Path, dic
         candidates = [item for item in index['manifests']
                       if item.get('platform', {}).get('os') == 'linux'
                       and item.get('platform', {}).get('architecture') == 'amd64']
-        if len(candidates) != 1:
-            raise RuntimeError('OCI archive must contain one linux/amd64 image')
-        descriptor = candidates[0]
+        descriptor = one_unique_descriptor(candidates, 'linux/amd64 image')
     manifest_file = verify_descriptor(root, descriptor)
     manifest = json.loads(manifest_file.read_bytes())
     return descriptor, manifest_file, manifest
@@ -223,9 +228,8 @@ def main() -> None:
     top = [item for item in index['manifests']
            if item.get('platform', {}).get('os', 'linux') == 'linux'
            and item.get('platform', {}).get('architecture', 'amd64') == 'amd64']
-    if len(top) != 1:
-        raise RuntimeError('OCI archive must have one top-level linux/amd64 descriptor')
-    descriptor, manifest_file, manifest = select_image_manifest(work, top[0])
+    descriptor = one_unique_descriptor(top, 'top-level linux/amd64 descriptor')
+    descriptor, manifest_file, manifest = select_image_manifest(work, descriptor)
     manifest_digest = descriptor['digest']
 
     try:

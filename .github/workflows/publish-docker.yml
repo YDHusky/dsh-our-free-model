@@ -67,7 +67,6 @@ jobs:
           file: ./Dockerfile
           push: false
           platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BUN_IMAGE=${{ env.REGISTRY }}/library/ofm-bun:1.3.6
