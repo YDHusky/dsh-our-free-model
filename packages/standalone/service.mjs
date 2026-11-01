@@ -111,6 +111,7 @@ async function acquireServiceLock(dataDir) {
 export async function startStandalone({
   dataDir = resolveStandaloneDataDir(), host = '127.0.0.1', port,
   logger = console, refresh = true, probe, lanEnabled, lanPort, lanKey,
+  virtualModels = [],
   startRelay = startLanRelay,
   workbenchOptions, subscriptionOptions,
   // The desktop updater judges the host it runs on (`win32` + `x64` only). It
@@ -275,6 +276,7 @@ export async function startStandalone({
     const combinedSubscriptionRuntime = combineSubscriptionRuntimes(magpieModels, subscriptionRuntime)
     runtime = createModelRuntime({
       ...stores, logger, attributionUserAgent: `${PRODUCT}/${VERSION}`,
+      virtualModels,
       sealedCredential: eac.credential,
       subscriptionRuntime: combinedSubscriptionRuntime,
     })

@@ -286,6 +286,7 @@ export class FreeModelAdapter {
       return
     }
     const tried = []
+    const failures = []
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index]
       const iterator = this.runSingle(options, candidate, snapshot, {
@@ -320,11 +321,29 @@ export class FreeModelAdapter {
         rejectedTurn(index + 1)
         return
       }
+      const candidateFailure = terminalFailure(held)
+      if (candidateFailure !== null) failures.push(candidateFailure)
       const reason = result.verdict === null || result.verdict === undefined ? 'failed' : describeVerdict(result.verdict)
       tried.push(`${candidate.id} (${reason})`)
       this.deps.warn?.(`our-free-model: chain "${entry.name}" advanced past ${candidate.id} — ${reason}`)
     }
     rejectedTurn(candidates.length)
+    // Preserve the useful HTTP contract when every independent route hit its
+    // quota before producing an answer. Flattening this into SERVER/502 makes a
+    // caller retry immediately and hides the one action it understands: wait
+    // for quota, or select another route. The shortest provider reset is when
+    // at least one candidate can answer again.
+    if (failures.length === candidates.length && failures.every(failure => failure.code === CODE.quota || failure.status === 429)) {
+      const retryAfter = failures.map(failure => failure.providerRetryAfterMs)
+        .filter(value => Number.isFinite(value) && value > 0)
+      yield { type: 'finish', reason: { kind: 'error', failure: {
+        message: `the route "${entry.name}" exhausted every candidate because all are rate limited`,
+        code: CODE.quota,
+        status: 429,
+        ...(retryAfter.length === 0 ? {} : { providerRetryAfterMs: Math.min(...retryAfter) }),
+      } } }
+      return
+    }
     yield { type: 'finish', reason: { kind: 'error', failure: {
       message: `the chain "${entry.name}" exhausted every candidate: ${tried.join('; ')}`,
       code: CODE.server,
@@ -943,6 +962,17 @@ function commitsAnswer(chunk) {
   if (chunk.block?.type === 'reasoning') return false
   if (chunk.block?.type === 'text') return typeof chunk.block.text === 'string' && chunk.block.text.trim() !== ''
   return true
+}
+
+/** Last classified failure held inside an uncommitted combo attempt. */
+function terminalFailure(chunks) {
+  for (let index = chunks.length - 1; index >= 0; index -= 1) {
+    const chunk = chunks[index]
+    if (chunk?.type !== 'finish') continue
+    const failure = chunk.reason?.failure
+    if (failure !== null && typeof failure === 'object') return failure
+  }
+  return null
 }
 
 /** What the token savers measured for one dispatched body, as usage-record fields. */

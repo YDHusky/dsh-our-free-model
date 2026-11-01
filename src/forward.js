@@ -536,6 +536,13 @@ export async function startLanRelay({ config, log = () => {}, onTrace = () => {}
   async function relay(req, res, trace) {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname.replace(/\/+$/, '') || '/'
+    // Gemini uses model-shaped paths rather than a fixed endpoint. Recognise
+    // them at the public relay as well as the loopback listener; malformed
+    // percent encoding is still relayed so the canonical Gemini handler can
+    // return its structured INVALID_ARGUMENT response.
+    let gemini = false
+    try { gemini = geminiRoute(path) !== null }
+    catch { gemini = path === '/v1beta/models' || /^\/(?:v1beta|v1)\/models\//.test(path) }
     // A browser cannot put a key on a preflight, and answering one spends
     // nothing, so OPTIONS goes through unauthenticated.
     if (req.method === 'OPTIONS') {
@@ -545,25 +552,32 @@ export async function startLanRelay({ config, log = () => {}, onTrace = () => {}
     }
     const settings = config()
     if (!settings.enabled) {
-      openAiError(res, 503, 'service_unavailable', 'the LAN relay is switched off in Our Free Model settings')
+      if (gemini) geminiError(res, 503, 'the LAN relay is switched off in Our Free Model settings')
+      else openAiError(res, 503, 'service_unavailable', 'the LAN relay is switched off in Our Free Model settings')
       return
     }
-    if (!authorized(req, settings.lanKey)) {
-      openAiError(res, 401, 'invalid_request_error', 'missing or invalid LAN key')
+    const googleKey = req.headers['x-goog-api-key'] ?? url.searchParams.get('key')
+    const googleAuthorized = gemini && typeof settings.lanKey === 'string' && settings.lanKey !== ''
+      && keyMatches(googleKey, settings.lanKey)
+    if (!authorized(req, settings.lanKey) && !googleAuthorized) {
+      if (gemini) geminiError(res, 401, 'missing or invalid API key')
+      else openAiError(res, 401, 'invalid_request_error', 'missing or invalid LAN key')
       return
     }
     // The one way this can happen is a relay port equal to the local forward
     // port: the relay would then be dialing itself. Refuse the second pass
     // instead of spinning until the sockets run out.
     if (req.headers[RELAY_HOP_HEADER] !== undefined) {
-      openAiError(res, 508, 'server_error', 'the LAN relay would be dialing itself — give it a port of its own')
+      if (gemini) geminiError(res, 500, 'the LAN relay would be dialing itself — give it a port of its own')
+      else openAiError(res, 508, 'server_error', 'the LAN relay would be dialing itself — give it a port of its own')
       return
     }
     if (!(settings.targetPort > 0)) {
-      openAiError(res, 503, 'service_unavailable', 'the local forward listener is not running')
+      if (gemini) geminiError(res, 503, 'the local forward listener is not running')
+      else openAiError(res, 503, 'service_unavailable', 'the local forward listener is not running')
       return
     }
-    if (!RELAY_PATHS.has(path)) {
+    if (!RELAY_PATHS.has(path) && !gemini) {
       openAiError(res, 404, 'not_found_error', `no route for ${req.method} ${path}`)
       return
     }
@@ -603,7 +617,10 @@ export async function startLanRelay({ config, log = () => {}, onTrace = () => {}
     target.on('error', error => {
       trace.setOutcome('failed')
       log(`lan relay upstream failed: ${error?.message ?? error}`)
-      if (!res.headersSent) openAiError(res, 502, 'server_error', 'the local forward listener did not answer')
+      if (!res.headersSent) {
+        if (gemini) geminiError(res, 502, 'the local forward listener did not answer')
+        else openAiError(res, 502, 'server_error', 'the local forward listener did not answer')
+      }
       else res.end()
     })
     // A caller that walks away takes its upstream request with it, the same rule

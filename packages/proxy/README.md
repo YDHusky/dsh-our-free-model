@@ -42,6 +42,30 @@ Base URL: http://127.0.0.1:8080/v1
 API Key:  the OFM_API_KEY value in .env
 ```
 
+## Automatic `free-model` route
+
+The Docker entry point publishes a stable virtual model id named `free-model`.
+It walks an ordered, cross-provider fallback chain and switches only before any
+visible answer or tool call has reached the client. By default it tries the
+native OpenCode free lane first, then the Kilo free routers and concrete free
+models. An OpenCode `429 Free usage limit reached` therefore falls through to a
+different free upstream instead of ending the request. If every candidate is
+rate limited, the proxy preserves an OpenAI-compatible HTTP 429 response.
+
+Use the same model id with each supported protocol surface:
+
+| Client style | Endpoint |
+| --- | --- |
+| OpenAI Chat Completions | `POST /v1/chat/completions` |
+| OpenAI Responses | `POST /v1/responses` |
+| Anthropic Messages | `POST /v1/messages` |
+| Gemini GenerateContent | `POST /v1beta/models/free-model:generateContent` |
+| Gemini streaming | `POST /v1beta/models/free-model:streamGenerateContent?alt=sse` |
+
+OpenAI and Anthropic clients may use `Authorization: Bearer ...` or `x-api-key`.
+Gemini clients may use `x-goog-api-key` or the `key` query parameter. In every
+case the value is the same `OFM_API_KEY` configured on the container.
+
 Verify the deployment:
 
 ```bash
@@ -76,6 +100,7 @@ print(result.choices[0].message.content)
 | `OFM_PORT` | no | `8080` | Port inside the container |
 | `OFM_DATA_DIR` | no | `/data` | Persistent settings, credentials, and statistics |
 | `OFM_NO_REFRESH` | no | `false` | Skip catalogue refresh at startup and on its timer |
+| `OFM_FREE_MODEL_CANDIDATES` | no | cross-provider free chain | Ordered comma-separated model ids behind `free-model`; set `off` to remove the alias |
 | `OFM_PUBLIC_PORT` | Compose only | `8080` | Host port mapped to container port 8080 |
 | `OFM_IMAGE_TAG` | Compose only | `latest` | Published image tag pulled by Compose |
 

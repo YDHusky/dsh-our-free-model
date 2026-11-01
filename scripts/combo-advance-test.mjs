@@ -236,6 +236,19 @@ await check('a refusal before any output still advances (the plain case)', async
   assert.equal(run.turns[0].attempts, 2)
 })
 
+await check('an entirely rate-limited chain preserves a clear 429 failure', async () => {
+  const run = await drive([
+    { status: 429, body: '{"error":{"message":"first route rate limited","type":"rate_limit_error"}}' },
+    { status: 429, body: '{"error":{"message":"second route rate limited","type":"rate_limit_error"}}' },
+  ])
+  assert.equal(run.scenario.requests.length, 2)
+  assert.equal(run.finish?.kind, 'error')
+  assert.equal(run.finish?.failure?.code, 'RATE_LIMIT')
+  assert.equal(run.finish?.failure?.status, 429)
+  assert.match(run.finish?.failure?.message ?? '', /all are rate limited/)
+  assert.equal(run.text, '')
+})
+
 for (const [status, type, message, attempts] of [
   [400, '', 'bad request', 2],
   [400, '', 'maximum context length exceeded', 2],

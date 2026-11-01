@@ -62,12 +62,20 @@ export function createModelRuntime({
   settings, stats, availability, catalogStore,
   logger = console,
   attributionUserAgent = 'our-free-model',
+  virtualModels = [],
   resolveImage,
   sealedCredential = () => null,
   onSealedUnavailable = () => {},
   onTopology = () => {},
   subscriptionRuntime,
 }) {
+  // Product-owned virtual models are kept outside settings. The Docker proxy
+  // uses this seam for its stable `free-model` auto-router, so an existing
+  // /data volume gains the route on upgrade without rewriting a user's saved
+  // combo definitions. The rows still use the ordinary combo machinery: they
+  // advertise the capacity intersection and obey the same pre-output failover
+  // rule as a combo created in the settings page.
+  const systemCombos = normalizeVirtualModels(virtualModels)
   let catalog = materializeCatalog(catalogStore.get().entries ?? [])
   let sealedCatalog = sealedCredential() === null ? [] : buildEacCatalog(catalogStore.get().sealIds ?? [])
   let kiloCatalog = reviveKiloCatalog(catalogStore.get().kiloRows)
@@ -105,7 +113,7 @@ export function createModelRuntime({
       seen.add(entry.id)
       merged.push(entry)
     }
-    const combos = normalizeCombos(settings.get().combos)
+    const combos = [...normalizeCombos(settings.get().combos), ...systemCombos]
     comboCatalog = buildComboCatalog(combos, merged)
     pruneRotation(combos)
     for (const entry of comboCatalog) {
@@ -427,6 +435,39 @@ export function createModelRuntime({
       lifetime.abort()
     },
   }
+}
+
+/**
+ * Validate product-owned combo rows without imposing the user-facing `combo:`
+ * prefix. These rows come from an entry point rather than settings, but keeping
+ * the boundary strict prevents an environment typo from publishing an invalid
+ * model id or an unbounded chain.
+ */
+function normalizeVirtualModels(raw) {
+  const rows = Array.isArray(raw) ? raw : []
+  const seen = new Set()
+  const out = []
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    const id = typeof row.id === 'string' ? row.id.trim() : ''
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) || seen.has(id)) continue
+    const models = [...new Set((Array.isArray(row.models) ? row.models : [])
+      .map(value => String(value ?? '').trim())
+      .filter(value => value !== '' && value !== id))].slice(0, 32)
+    if (models.length === 0) continue
+    seen.add(id)
+    out.push({
+      id,
+      name: typeof row.name === 'string' && row.name.trim() !== '' ? row.name.trim() : id,
+      models,
+      strategy: ['fallback', 'round-robin', 'smart', 'usage', 'pace'].includes(row.strategy)
+        ? row.strategy : 'fallback',
+      stickyLimit: Number.isFinite(Number(row.stickyLimit)) && Number(row.stickyLimit) > 0
+        ? Math.trunc(Number(row.stickyLimit)) : 1,
+      enabled: row.enabled !== false,
+    })
+  }
+  return out
 }
 
 function materializeCatalog(ids) {

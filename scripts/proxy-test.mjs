@@ -10,8 +10,11 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ofm-proxy-'))
 const model = 'mimo-v2.6-flash-free'
+const kiloModel = 'kilo-auto/free'
 const publicKey = 'proxy-public-test-key'
 let streamGate
+let freeRateLimited = false
+let kiloRateLimited = false
 const frame = value => `data: ${JSON.stringify(value)}\n\n`
 const upstream = http.createServer((req, res) => {
   const chunks = []
@@ -19,12 +22,21 @@ const upstream = http.createServer((req, res) => {
   req.on('end', () => {
     if (req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ data: req.url === '/models' ? [] : [{ id: model }] }))
+      res.end(JSON.stringify({ data: req.url === '/models'
+        ? [{ id: kiloModel, name: 'Kilo Auto (free)', isFree: true }]
+        : [{ id: model }] }))
       return
     }
-    JSON.parse(Buffer.concat(chunks).toString() || '{}')
+    const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
+    const kilo = req.url === '/chat/completions' && body.model === kiloModel
+    const free = req.url.startsWith('/inference/') && body.model === model
+    if ((free && freeRateLimited) || (kilo && kiloRateLimited)) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '3' })
+      res.end(JSON.stringify({ error: { message: 'fixture free usage limit reached', type: 'rate_limit_error', code: 'RATE_LIMIT' } }))
+      return
+    }
     res.writeHead(200, { 'content-type': 'text/event-stream' })
-    res.write(frame({ choices: [{ index: 0, delta: { content: 'PROXY OK' } }] }))
+    res.write(frame({ choices: [{ index: 0, delta: { content: kilo ? 'KILO FALLBACK OK' : 'PROXY OK' } }] }))
     const finish = () => res.end(frame({
       choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
       usage: { prompt_tokens: 4, completion_tokens: 2 },
@@ -56,13 +68,14 @@ const check = async (name, run) => {
 }
 const settings = directory => JSON.parse(fs.readFileSync(path.join(directory, 'settings.json'), 'utf8'))
 const relayUrl = () => `http://127.0.0.1:${service.lan.port}`
-const request = async (route, { key = publicKey, body, method } = {}) => {
+const request = async (route, { key = publicKey, body, method, headers = {} } = {}) => {
   const response = await fetch(relayUrl() + route, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: {
       connection: 'close',
       ...key ? { authorization: `Bearer ${key}` } : {},
       ...body === undefined ? {} : { 'content-type': 'application/json' },
+      ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(10000),
@@ -115,12 +128,23 @@ try {
     assert.throws(() => proxyOptions({}), /OFM_API_KEY/)
     assert.throws(() => proxyOptions({ OFM_API_KEY: 'key', OFM_PORT: '65536' }), /OFM_PORT/)
     assert.throws(() => proxyOptions({ OFM_API_KEY: 'key', OFM_NO_REFRESH: 'sometimes' }), /OFM_NO_REFRESH/)
-    assert.deepEqual(proxyOptions({
+    assert.throws(() => proxyOptions({ OFM_API_KEY: 'key', OFM_FREE_MODEL_CANDIDATES: 'one, bad id' }), /OFM_FREE_MODEL_CANDIDATES/)
+    const options = proxyOptions({
       OFM_API_KEY: ' key ', OFM_PORT: '8123', OFM_DATA_DIR: './fixture', OFM_NO_REFRESH: 'yes',
-    }), {
+    })
+    const { virtualModels, ...base } = options
+    assert.deepEqual(base, {
       dataDir: path.resolve('./fixture'), port: 0, refresh: false,
       lanEnabled: true, lanPort: 8123, lanKey: 'key',
     })
+    assert.equal(virtualModels.length, 1)
+    assert.equal(virtualModels[0].id, 'free-model')
+    assert.ok(virtualModels[0].models.includes(kiloModel))
+    assert.deepEqual(proxyOptions({ OFM_API_KEY: 'key', OFM_FREE_MODEL_CANDIDATES: 'off' }).virtualModels, [])
+    assert.deepEqual(
+      proxyOptions({ OFM_API_KEY: 'key', OFM_FREE_MODEL_CANDIDATES: `${model},${kiloModel},${model}` }).virtualModels[0].models,
+      [model, kiloModel],
+    )
   })
 
   await check('programmatic LAN key validation happens before data is created', async () => {
@@ -134,6 +158,7 @@ try {
   const dataDir = path.join(scratch, 'data')
   service = await startStandalone({
     dataDir, port: 0, refresh: false, lanEnabled: true, lanPort: 0, lanKey: publicKey,
+    virtualModels: [{ id: 'free-model', name: 'Free Model Auto Router', models: [model, kiloModel], strategy: 'fallback' }],
     logger: { warn() {} },
   })
   await service.ready
@@ -153,6 +178,7 @@ try {
     const models = await request('/v1/models')
     assert.equal(models.status, 200)
     assert.ok(models.value.data.some(row => row.id === model))
+    assert.ok(models.value.data.some(row => row.id === 'free-model'))
     for (const route of ['/', '/health', '/api/management/summary', '/api/management/key']) {
       assert.equal((await request(route)).status, 404, route)
     }
@@ -167,6 +193,50 @@ try {
     const responses = await request('/v1/responses', { body: { model, input: 'ping' } })
     assert.equal(responses.status, 200, responses.text)
     assert.ok(JSON.stringify(responses.value.output).includes('PROXY OK'))
+  })
+
+  await check('free-model crosses providers and works through four client protocol styles', async () => {
+    freeRateLimited = true
+    try {
+      const chat = await request('/v1/chat/completions', {
+        body: { model: 'free-model', messages: [{ role: 'user', content: 'ping' }] },
+      })
+      assert.equal(chat.status, 200, chat.text)
+      assert.equal(chat.value.choices[0].message.content, 'KILO FALLBACK OK')
+
+      const responses = await request('/v1/responses', { body: { model: 'free-model', input: 'ping' } })
+      assert.equal(responses.status, 200, responses.text)
+      assert.ok(JSON.stringify(responses.value.output).includes('KILO FALLBACK OK'))
+
+      const messages = await request('/v1/messages', {
+        body: { model: 'free-model', max_tokens: 64, messages: [{ role: 'user', content: 'ping' }] },
+        headers: { 'anthropic-version': '2023-06-01' },
+      })
+      assert.equal(messages.status, 200, messages.text)
+      assert.ok(JSON.stringify(messages.value.content).includes('KILO FALLBACK OK'))
+
+      const geminiModels = await request('/v1beta/models', {
+        key: '', headers: { 'x-goog-api-key': publicKey }, method: 'GET',
+      })
+      assert.equal(geminiModels.status, 200, geminiModels.text)
+      assert.ok(geminiModels.value.models.some(row => row.name === 'models/free-model'))
+      const gemini = await request('/v1beta/models/free-model:generateContent', {
+        key: '', headers: { 'x-goog-api-key': publicKey },
+        body: { contents: [{ role: 'user', parts: [{ text: 'ping' }] }] },
+      })
+      assert.equal(gemini.status, 200, gemini.text)
+      assert.ok(JSON.stringify(gemini.value.candidates).includes('KILO FALLBACK OK'))
+
+      kiloRateLimited = true
+      const limited = await request('/v1/chat/completions', {
+        body: { model: 'free-model', messages: [{ role: 'user', content: 'ping' }] },
+      })
+      assert.equal(limited.status, 429, limited.text)
+      assert.equal(limited.value.error.code, 'RATE_LIMIT')
+    } finally {
+      freeRateLimited = false
+      kiloRateLimited = false
+    }
   })
 
   await check('streaming reaches the client before the upstream response ends', async () => {
@@ -208,12 +278,15 @@ try {
   const beforeRestart = settings(dataDir)
   service = await startStandalone({
     dataDir, port: 0, refresh: false, lanEnabled: true, lanPort: 0, lanKey: publicKey,
+    virtualModels: [{ id: 'free-model', name: 'Free Model Auto Router', models: [model, kiloModel], strategy: 'fallback' }],
     logger: { warn() {} },
   })
   await check('restart preserves the fixed public key and private loopback key', () => {
     const afterRestart = settings(dataDir)
     assert.equal(afterRestart.standaloneLanKey, publicKey)
     assert.equal(afterRestart.forwardKey, beforeRestart.forwardKey)
+    assert.ok(service.runtime.publicModelRows().some(row => row.id === 'free-model'))
+    assert.ok(!afterRestart.combos.some(row => row.id === 'free-model'), 'product route must not overwrite saved combos')
   })
   await service.close()
   service = undefined

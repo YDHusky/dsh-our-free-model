@@ -48,7 +48,9 @@ docker compose up -d --build
 ```
 
 默认 Base URL 为 `http://127.0.0.1:8080/v1`，API Key 为 `.env` 中的
-`OFM_API_KEY`。详细配置、SDK 示例和安全边界见
+`OFM_API_KEY`。容器额外公开固定模型 ID `free-model`，它会在回答正文开始前自动跨
+OpenCode 与 Kilo 免费渠道降级；同一个 ID 可用于 OpenAI Chat Completions、Responses、
+Anthropic Messages 和 Gemini GenerateContent 接口。详细配置、SDK 示例和安全边界见
 [Docker OpenAI 反代说明](packages/proxy/README.md)。推理请求仍会发送到所选渠道的上游，
 容器本身不在本地运行模型。
 
