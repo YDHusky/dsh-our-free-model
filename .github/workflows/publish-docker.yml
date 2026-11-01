@@ -63,6 +63,9 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUN_IMAGE=${{ env.REGISTRY }}/library/ofm-bun:1.3.6
+            NODE_IMAGE=${{ env.REGISTRY }}/library/ofm-node:24-slim
           provenance: false
 
       - name: Publish summary

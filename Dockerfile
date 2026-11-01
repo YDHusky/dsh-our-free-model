@@ -1,6 +1,9 @@
-FROM oven/bun:1.3.6 AS bun
+ARG BUN_IMAGE=oven/bun:1.3.6
+ARG NODE_IMAGE=node:24-slim
 
-FROM node:24-slim
+FROM ${BUN_IMAGE} AS bun
+
+FROM ${NODE_IMAGE}
 
 ENV NODE_ENV=production \
     OFM_DATA_DIR=/data \
