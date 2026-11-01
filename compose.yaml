@@ -1,5 +1,6 @@
 services:
   ofm-proxy:
+    image: registry.yudream.online/library/dsh-our-free-model-proxy:${OFM_IMAGE_TAG:-latest}
     build:
       context: .
     restart: unless-stopped

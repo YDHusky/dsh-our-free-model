@@ -6,7 +6,27 @@ inference-only relay. The public listener supports the OpenAI compatible
 the existing Anthropic Messages routes. The management server remains bound to
 the container's loopback interface and is not published.
 
-## Start with Docker Compose
+## Start with the published image
+
+The CI workflow publishes multi-architecture images to:
+
+```text
+registry.yudream.online/library/dsh-our-free-model-proxy:latest
+```
+
+Start the published image with Compose:
+
+```bash
+cp .env.example .env
+openssl rand -hex 32
+# Put the generated value in .env as OFM_API_KEY.
+docker compose pull
+docker compose up -d
+```
+
+Use `OFM_IMAGE_TAG=sha-xxxxxxx` in `.env` to pin a commit image.
+
+## Build locally with Docker Compose
 
 ```bash
 cp .env.example .env
@@ -57,6 +77,7 @@ print(result.choices[0].message.content)
 | `OFM_DATA_DIR` | no | `/data` | Persistent settings, credentials, and statistics |
 | `OFM_NO_REFRESH` | no | `false` | Skip catalogue refresh at startup and on its timer |
 | `OFM_PUBLIC_PORT` | Compose only | `8080` | Host port mapped to container port 8080 |
+| `OFM_IMAGE_TAG` | Compose only | `latest` | Published image tag pulled by Compose |
 
 The Compose service uses a named volume for `/data`, runs as the unprivileged
 `node` user, drops Linux capabilities, and mounts the root filesystem read-only.
