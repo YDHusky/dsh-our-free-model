@@ -54,12 +54,13 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
 
-      - name: Build and push
+      - name: Build image
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          push: true
+          load: true
+          push: false
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -68,10 +69,34 @@ jobs:
             NODE_IMAGE=${{ env.REGISTRY }}/library/ofm-node:24-slim
           provenance: false
 
+      - name: Push image with Docker
+        id: push
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+
+          log_file="$RUNNER_TEMP/docker-push.log"
+          : > "$log_file"
+
+          while IFS= read -r tag; do
+            if [[ -n "$tag" ]]; then
+              docker push "$tag" | tee -a "$log_file"
+            fi
+          done <<< "$IMAGE_TAGS"
+
+          digest="$(awk '/^digest: sha256:/ { value = $2 } END { print value }' "$log_file")"
+          if [[ -z "$digest" ]]; then
+            echo 'Docker did not report a manifest digest.' >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Publish summary
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           {
             echo '## Published image'
